@@ -1,0 +1,6 @@
+select
+f.wavelength as wavelength,
+f.name as name,
+f.width as width,
+f.filter_id as filter_id
+from Filter f

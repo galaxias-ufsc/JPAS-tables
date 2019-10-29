@@ -1,0 +1,23 @@
+select
+
+d.angdist as angdist,
+d.tile_id as tile_id,
+d.number as number,
+d.objno as objno,
+d.raj2000 as raj2000,
+d.dej2000 as dej2000,
+d.bmag as bmag,
+d.rmag as rmag,
+d.imag as imag,
+d.rg as rg,
+d.abs_bmag as abs_bmag,
+d.objname as objname,
+d.z as z,
+d.e_z as e_z,
+d.q_z as q_z,
+d.zbest as zbest,
+d.cl as cl,
+d.scl as scl,
+d.sigv as sigv
+
+from xmatch_deep2_spec d

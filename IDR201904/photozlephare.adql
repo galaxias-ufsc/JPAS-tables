@@ -1,0 +1,15 @@
+select
+
+l.tile_id as tile_id,
+l.number as number,
+l.photoz as photoz,
+l.photoz_err as photoz_err,
+l.z_cumulative_pdf as z_cumulative_pdf,
+l.z_ml as z_ml,
+l.z_best68_high as z_best68_high,
+l.z_best68_low as z_best68_low,
+l.chi_best as chi_best,
+l.odds as odds
+
+from PhotoZLephare l
+
