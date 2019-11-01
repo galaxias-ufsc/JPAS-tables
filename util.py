@@ -46,7 +46,6 @@ def obj_col_to_array(c):
     for x in c:
         if len(x) > max_len_x:
             max_len_x = len(x)
-            break
 
     if isinstance(x, bytes):
         dtype = np.dtype('|S20')
