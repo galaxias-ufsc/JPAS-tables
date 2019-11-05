@@ -9,6 +9,9 @@ Created on 25 de abr de 2019
 from astropy.table import Table, Column, join
 import numpy as np
 from tqdm import tqdm
+import argparse
+from os import path
+from astropy import log
 
 
 def xmatch_get_closest(t, keys, debug=False):
@@ -25,24 +28,38 @@ def xmatch_get_closest(t, keys, debug=False):
     rows = np.array(rows, dtype=t.dtype)
     return Table(rows)
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='Create JPAS master table.')
+    parser.add_argument('--output', dest='output', default='master_table.fits',
+                        help='Save master table to this file. Default: master-table.fits.')
+    parser.add_argument('--overwrite', dest='overwrite', action='store_true',
+                        help='Overwrite output.')
+    parser.add_argument('--tables-dir', dest='tablesDir', default='.',
+                        help='Destination path for tables. Default: current directory.')
+    parser.add_argument('--debug', dest='debug', action='store_true',
+                        help='Be verbose.')
+    return parser.parse_args()
+
+args = parse_args()
+if args.debug:
+    log.setLevel('DEBUG')
 
 # Unknown problem with data, received as 99.0
 flag_99 = 1 << 31
 
-debug = False
+tables_dir = 'tables'
+mag_table = path.join(tables_dir, 'magabdualobj.fits')
+mag_single_table = path.join(tables_dir, 'magabsingleobj.fits')
+tileimage_table = path.join(tables_dir, 'tileimage.fits')
+xjplus_table = path.join(tables_dir, 'xmatch_jplus_dr1.fits')
+xsdss_table = path.join(tables_dir, 'xmatch_sdss_dr12.fits')
+xdeep2_table = path.join(tables_dir, 'xmatch_deep2_spec.fits')
+photoz_table = path.join(tables_dir, 'photozlephare.fits')
+xalhambra_table = path.join(tables_dir, 'xmatch_alhambra.fits')
+muffit_table = path.join(tables_dir, 'photoz_MUFFIT_AUTO.txt')
 
-mag_table = 'data/catalogs/minijpas_IDR201904_MagABDualObj.fits'
-mag_single_table = 'data/catalogs/minijpas_IDR201904_MagABSingleObj.fits'
-tileimage_table = 'data/catalogs/minijpas_IDR201904_tileimage.fits'
-xjplus_table = 'data/catalogs/minijpas_IDR201904_xmatch_jplus_dr1.fits'
-xsdss_table = 'data/catalogs/minijpas_IDR201904_xmatch_sdss_dr12.fits'
-xdeep2_table = 'data/catalogs/minijpas_IDR201904_xmatch_deep2_spec.fits'
-photoz_table = 'data/catalogs/minijpas_IDR201904_PhotoZLephare.fits'
-xalhambra_table = 'data/catalogs/minijpas_IDR201904_xmatch_alhambra.fits'
-muffit_table = 'data/catalogs/photoz_MUFFIT_AUTO.txt'
-
-master_table = 'data/catalogs/AEGIS_idr201904_master_v07.fits'
-master_alhambra_table = 'data/catalogs/AEGIS_idr201904_master_alhambra_v07.fits'
+master_table = path.join(tables_dir, 'master_v01.fits')
+master_alhambra_table = path.join(tables_dir, 'master_v01_alhambra.fits')
 
 key = ['tile_id', 'number']
 jplus_fix_names= ['angdist',
@@ -69,7 +86,7 @@ jplus_fix_names= ['angdist',
 
 print('Reading JPAS dual detection table.')
 mag = Table.read(mag_table)
-if debug:
+if args.debug:
     print('*** Debug: reading only 100 rows.')
     mag = mag[:100]
 ID = ['%d-%d' % (tid, oid) for tid, oid in zip(mag['tile_id'], mag['number'])]
@@ -162,28 +179,24 @@ xjplus.rename_column('jpas_tile_id', 'tile_id')
 xjplus.rename_column('jpas_number', 'number')
 xjplus.rename_column('jplus_tile_id', 'tile_id_jplus')
 xjplus.rename_column('jplus_number', 'number_jplus')
-xjplus_single = xmatch_get_closest(xjplus, key, debug)
+xjplus_single = xmatch_get_closest(xjplus, key, args.debug)
 
 print('Reading xmatch SDSS table.')
 xsdss = Table.read(xsdss_table)
 has_zspec = xsdss['zsp'] > 0.0
 xsdss_spec = xsdss[has_zspec]
 xsdss_photo = xsdss[~has_zspec]
-xsdss_spec_single = xmatch_get_closest(xsdss_spec, key, debug)
-xsdss_photo_single = xmatch_get_closest(xsdss_photo, key, debug)
+xsdss_spec_single = xmatch_get_closest(xsdss_spec, key, args.debug)
+xsdss_photo_single = xmatch_get_closest(xsdss_photo, key, args.debug)
 
 print('Reading xmatch DEEP2 table.')
 xdeep2 = Table.read(xdeep2_table)
 xdeep2_spec = xdeep2[xdeep2['z'] > 0.0]
-xdeep2_single = xmatch_get_closest(xdeep2_spec, key, debug)
+xdeep2_single = xmatch_get_closest(xdeep2_spec, key, args.debug)
 
 print('Reading Photo Z table.')
 photoz = Table.read(photoz_table)
 photoz_spec = photoz[photoz['photoz'] > 0.0]
-
-print('Reading MUFFIT Photo Z table.')
-muffit = Table.read(muffit_table, format='ascii', names=['ID', 'ra', 'dec', 'z_photo', 'z_photo_err'])
-
 
 print('Join JPLUS.')
 master = join(mag, xjplus_single, join_type='left', keys=key, table_names=['jpas', 'jplus'])
@@ -224,67 +237,72 @@ jphotoz = join(idx, photoz_spec, join_type='left', keys=key, table_names=['jpas'
 master['z_photo_lephare'] = jphotoz['photoz']
 master['z_photo_err_lephare'] = jphotoz['photoz_err']
 
-print('Join MUFFIT.')
-jmuffit = join(idx, muffit, join_type='left', keys='ID', table_names=['jpas', 'muffit'])
-master['z_photo_muffit'] = jmuffit['z_photo']
-master['z_photo_err_muffit'] = jmuffit['z_photo_err']
+if path.exists(muffit_table):
+    print('Reading MUFFIT Photo Z table.')
+    muffit = Table.read(muffit_table, format='ascii', names=['ID', 'ra', 'dec', 'z_photo', 'z_photo_err'])
+    
+    print('Join MUFFIT.')
+    jmuffit = join(idx, muffit, join_type='left', keys='ID', table_names=['jpas', 'muffit'])
+    master['z_photo_muffit'] = jmuffit['z_photo']
+    master['z_photo_err_muffit'] = jmuffit['z_photo_err']
 
 print('Writing master table.')
 master.sort(keys=['ID'])
 master.write(master_table, overwrite=True)
 
-print('Reading Alhambra.')
-xalhambra = Table.read(xalhambra_table)
-
-alhambra_filters = ['f396w',
-                    'f427w',
-                    'f458w',
-                    'f489w',
-                    'f520w',
-                    'f551w',
-                    'f582w',
-                    'f613w',
-                    'f644w',
-                    'f675w',
-                    'f706w',
-                    'f737w',
-                    'f768w',
-                    'f799w',
-                    'f830w',
-                    'f861w',
-                    'f892w',
-                    'f923w',
-                    'f954w',
-                    ]
-
-mag_shape = (len(xalhambra), len(alhambra_filters))
-alhambra_mag = np.zeros(mag_shape)
-alhambra_mag_err = np.zeros(mag_shape)
-alhambra_irms = np.zeros(mag_shape)
-
-for i, f in enumerate(alhambra_filters):
-    alhambra_mag[:, i] = xalhambra[f]
-    alhambra_mag_err[:, i] = xalhambra['e_' + f]
-    alhambra_irms[:, i] = xalhambra['irms' + f]
-
-    xalhambra.remove_column(f)
-    xalhambra.remove_column('e_' + f)
-    xalhambra.remove_column('irms' + f)
-    xalhambra.remove_column('l_' + f)
-
-xalhambra['mag'] = alhambra_mag
-xalhambra['mag_err'] = alhambra_mag
-xalhambra['irms'] = alhambra_irms
-
-for c in xalhambra.colnames:
-    if c in ['tile_id', 'number', 'angdist']: continue
-    xalhambra.rename_column(c, '%s_alhambra' % c)
-
-xalhambra_single = xmatch_get_closest(xalhambra, key, debug)
-
-print('Join Alhambra.')
-master_alhambra = join(master, xalhambra_single, join_type='left', keys=key, table_names=['jpas', 'alhambra'])
-
-
-print('Writing master Alhambra table.')
-master_alhambra.write(master_alhambra_table, overwrite=True)
+if path.exists(xalhambra_table):
+    print('Reading Alhambra.')
+    xalhambra = Table.read(xalhambra_table)
+    
+    alhambra_filters = ['f396w',
+                        'f427w',
+                        'f458w',
+                        'f489w',
+                        'f520w',
+                        'f551w',
+                        'f582w',
+                        'f613w',
+                        'f644w',
+                        'f675w',
+                        'f706w',
+                        'f737w',
+                        'f768w',
+                        'f799w',
+                        'f830w',
+                        'f861w',
+                        'f892w',
+                        'f923w',
+                        'f954w',
+                        ]
+    
+    mag_shape = (len(xalhambra), len(alhambra_filters))
+    alhambra_mag = np.zeros(mag_shape)
+    alhambra_mag_err = np.zeros(mag_shape)
+    alhambra_irms = np.zeros(mag_shape)
+    
+    for i, f in enumerate(alhambra_filters):
+        alhambra_mag[:, i] = xalhambra[f]
+        alhambra_mag_err[:, i] = xalhambra['e_' + f]
+        alhambra_irms[:, i] = xalhambra['irms' + f]
+    
+        xalhambra.remove_column(f)
+        xalhambra.remove_column('e_' + f)
+        xalhambra.remove_column('irms' + f)
+        xalhambra.remove_column('l_' + f)
+    
+    xalhambra['mag'] = alhambra_mag
+    xalhambra['mag_err'] = alhambra_mag
+    xalhambra['irms'] = alhambra_irms
+    
+    for c in xalhambra.colnames:
+        if c in ['tile_id', 'number', 'angdist']: continue
+        xalhambra.rename_column(c, '%s_alhambra' % c)
+    
+    xalhambra_single = xmatch_get_closest(xalhambra, key, args.debug)
+    
+    print('Join Alhambra.')
+    master_alhambra = join(master, xalhambra_single, join_type='left', keys=key, table_names=['jpas', 'alhambra'])
+    
+    
+    print('Writing master Alhambra table.')
+    master_alhambra.write(master_alhambra_table, overwrite=True)

@@ -13,7 +13,7 @@ from time import sleep
 default_service_url = 'https://archive.cefca.es/catalogues/vo/tap/minijpas-idr201910'
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Fit CSP models to JPAS/JPLUS magnitudes.')
+    parser = argparse.ArgumentParser(description='Download JPAS tables.')
     parser.add_argument('objectList', type=str, nargs='*',
                         help='Fit a list of objects, ignoring --range option.')
     parser.add_argument('--login', dest='login', help='Authentication username. Will prompt if not set.')
