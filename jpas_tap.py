@@ -338,7 +338,7 @@ class TAPQueueManager(object):
         
 
 @suppress_spec_warnings    
-def download_table(service, table_name, filename, overwrite=False, maxrec=1000000, timeout=600.0):
+def download_table(service, table_name, filename=None, overwrite=False, maxrec=1000000, timeout=600.0):
     '''
     Download a table from a TAP service, fix the columns and
     save to disk. Uses async mode to allow more records to be retrieved.
@@ -350,9 +350,9 @@ def download_table(service, table_name, filename, overwrite=False, maxrec=100000
         table_name : string
             Table name without the schema prefix. (Ex. no 'minijpas.')
         
-        filename : string
-            Path to the file to be saved. Must have a proper
-            extension (.fits, etc.) to allow astropy to guess the format.
+        filename : string, optional
+            If set, write the table to this path to the file to be saved.
+            Must have a proper extension (.fits, etc.) to allow astropy to guess the format.
             
         overwrite : bool, optional
             Overwrite the file if it already exists.
@@ -392,8 +392,9 @@ def download_table(service, table_name, filename, overwrite=False, maxrec=100000
     fix_names(t)
     convert_dtype(t)
     del t.meta['description']
-    log.info('Saving table.')
-    t.write(filename, overwrite=overwrite)
+    if filename is not None:
+        log.info('Saving table to %s.' % filename)
+        t.write(filename, overwrite=overwrite)
     return t
 
 
