@@ -5,15 +5,14 @@ Created on Oct 30, 2019
 '''
 
 import requests
-from time import sleep
 import warnings
 from os import path
 from astropy import log
+import numpy as np
+
 
 from pyvo.auth import authsession, securitymethods
 from pyvo.dal import TAPService, AsyncTAPJob
-
-from util import fix_names, convert_dtype
 
 __all__ = ['CEFCA_authenticate', 'TAPQueueManager', 'download_table', 'wait_job']
 
@@ -67,7 +66,7 @@ class TAPQueueManager(object):
     '''
     Submit, run, review and fetch results of TAP jobs.
     This is a little overcomplicated because, for some reason, the job list
-    returned by CEFCA TAPService is always empty.
+    returned by JPAS TAPService is always empty.
     Here we keep the job list in a local file.
     
     Parameters
@@ -191,7 +190,7 @@ class TAPQueueManager(object):
         for tab, j in self.jobs.items():
             if j.phase == 'PENDING':
                 j.run()
-                log.info('Started job %s.' % j.job_id)
+                log.info('Started job %s (%s).' % (j.job_id, tab))
                 return j
         return None
     
@@ -348,7 +347,7 @@ def download_table(service, table_name, filename, overwrite=False, maxrec=100000
     log.info('Starting job.')
     job.run()
     log.info('Waiting the job completion (current phase: %s)...' % job.phase)
-    wait_job(job)
+    job.wait(timeout=10.0)
     log.info('Fetching job results...')
     result = job.fetch_result()
         
@@ -363,39 +362,59 @@ def download_table(service, table_name, filename, overwrite=False, maxrec=100000
     return t
 
 
-def wait_job(job, phases=None, timeout=600.0):
+def fix_names(t):
     '''
-    waits for the job to reach the given phases.
-    Use this for CEFCA TAP because `AsyncTAPJob.wait()` fails.
-
-    Parameters
-    ----------
-    phases : list
-        phases to wait for
-
-    Raises
-    ------
-    DALServiceError
-        if the job is in a state that won't lead to an result
+    Make the table columns names simpler, and transform length=1 columns to scalars.
     '''
-    if not phases:
-        phases = {'COMPLETED', 'ABORTED', 'ERROR'}
+    for name in t.colnames:
+        field_name = name.split('.')[1].lower()
+        t[name].name = field_name
 
-    interval = 1.0
-    increment = 1.2
+def convert_dtype(t):
+    '''
+    TAP result tables have columns with weird dtype.
+    Transform the table to a more suitable format for FITS tables.
+    '''
+    obj_dtype = np.dtype('O')
+    for d in t.dtype.descr:
+        if len(d) == 3:
+            name, dtype, _ = d
+            t[name] = t[name].squeeze()
+        elif len(d) == 2:
+            name, dtype = d
+        else:
+            raise Exception('Unknown column description: %s' % d)
+        if dtype == obj_dtype:
+            log.debug('Found object type column: %s' % name)
+            data = obj_col_to_array(t[name])
+            t[name] = data
 
-    active_phases = {'QUEUED', 'EXECUTING', 'RUN', 'COMPLETED', 'ERROR', 'UNKNOWN'}
 
-    while True:
-        job._update(wait_for_statechange=True, timeout=timeout)
-        # use the cached value
-        cur_phase = job._job.phase
+def obj_col_to_array(c):
+    '''
+    Transform a colum of dtype object, each row containing
+    an array, to a 2-d array.
+    '''
+    # Detect the object size for initialization.
+    max_len_x = 0
+    for x in c:
+        if len(x) > max_len_x:
+            max_len_x = len(x)
 
-        if cur_phase not in active_phases:
-            raise Exception('Cannot wait for job completion. Job is not active!')
-
-        if cur_phase in phases:
-            break
-        log.debug('Sleeping %d seconds...' % interval)
-        sleep(interval)
-        interval = min(120, interval * increment)
+    if isinstance(x, bytes):
+        dtype = np.dtype('|S20')
+        shape = (len(c),)
+        data = np.zeros(shape, dtype=dtype)
+        for i, x in enumerate(c):
+            if len(x) == 0:
+                continue
+            data[i] = x
+    elif isinstance(x, np.ndarray):
+        if max_len_x == 0:
+            raise Exception('Column %s has all elements empty.' % c.name)
+        dtype = x.dtype
+        shape = (len(c), max_len_x)
+        data = np.zeros(shape, dtype=dtype)
+        for i, x in enumerate(c):
+            data[i, :len(x)] = x
+    return data

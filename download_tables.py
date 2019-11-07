@@ -6,9 +6,10 @@ Created on Oct 30, 2019
 
 import argparse
 from getpass import getpass
-from cefca_tap import TAPQueueManager
+from jpas_tap import TAPQueueManager
 from astropy import log
 from time import sleep
+from os import path
 
 default_service_url = 'https://archive.cefca.es/catalogues/vo/tap/minijpas-idr201910'
 
@@ -63,7 +64,8 @@ log.info('Connecting to %s.' % args.serviceUrl)
 tm = TAPQueueManager(args.serviceUrl, args.tablesDir)
 tm.connect(login, password)
 
-tm.loadJobList(args.jobList)
+if path.exists(args.jobList):
+    tm.loadJobList(args.jobList)
 
 for tab in table_list:
     log.info('Requesting table %s.' % tab)
