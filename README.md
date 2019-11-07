@@ -1,7 +1,7 @@
 # JPAS-tables
-Scripts to extract all JPAS data from VO interface to a single table.
+Scripts access JPAS data from the VO TAP interface.
 
-## TAP access to CEFCA
+## TAP access to JPAS database
 The TAP acess provided by CEFCA requires authentication. Using `pyvo`
 one needs to provide a `session` handler, which holds the cookies containing
 the credentials of the connection.
@@ -11,7 +11,7 @@ can be used as follows:
 
 ```
 from pyvo.dal import TAPService
-from cefca_tap import CEFCA_authenticate
+from jpas_tap import CEFCA_authenticate
 session = CEFCA_authenticate(login, password)
 service = TAPService('https://archive.cefca.es/catalogues/vo/tap/minijpas-idr201910', session)
 ```
@@ -25,19 +25,28 @@ tab = result.to_table()
 ```
 
 The results are stored as an `astropy.table.Table` in `tab`.
+This table has some issues:
 
-Note that asynchronous jobs don't work right now, as the TAP access
-does not seem to conform to the VO standards. I had to
-make some changes to `pyvo` to make it work. Meanwhile,
-only synchronous queries (using `TAPService.search()`as above)
-are supported, which limit the maximum number of rows returned to 10000.
+* The column names all begin with `'minijpas.'`.
+* All scalar columns have shape (1,).
+* All array columns have dtype `Object`.
+
+To fix these, there are some utility functions: `fix_names()` and `convert_dtype()`.
+To make things easier, I created a function `download_table()` that wraps everything.
+The example below downloads the table `minijpas.Filter`.
+
+```
+from jpas_tap import download_table
+t = download_table(service, 'filter')
+```
+It may be interesting to repurpose this function for generic ADQL queries.
 
 ## Extracting tables from ADQL VO interface
-When using asynchronous TAP access (by patching `pyvo`), it is
+When using asynchronous TAP access, it is
 fairly simple to extract whole tables from the database. This way I download
 a whole lot of tables to mess around in my computer using tools
 I am already used to work. This is a poor substitution to crafting
-proper ADQL scripts, but works for small amounts of data.
+proper ADQL scripts, but works fine for small amounts of data.
 
 The asynchronous access is the same as using the VO ADQL access in
 the web interface. Except that, for some reason, the list of jobs
@@ -50,20 +59,23 @@ job.run()
 print(job.phase)
 ```
 
-After waiting the job to finish (more on this later), download the
-table and save it.
+To wait for the job to complete, you either do a `job.wait()`,
+or implement a loop to do things while waiting (this is the whole reason
+this is called asynchronous, you know.)
+
+To download the results, do the following.
 
 ```
+from jpas_tap import fix_names, convert_dtype
+
 result = job.fetch_result()
 tab = result.to_table()
+fix_names(tab)
+convert_dtype(tab)
 tab.write('my_table.fits')
 ```
 
-Currently, `job.wait()`, which should block until the job is done,
-is broken for this service. So, you either implement a loop, or
-peek the web interface to see when it's done.
-
-The script `download_tables.py` is a fancy version of
+The script `download_tables.py` included is a fancy version of
 this procedure.
 
 ## Creating the master table
