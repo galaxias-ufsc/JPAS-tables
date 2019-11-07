@@ -49,10 +49,12 @@ def CEFCA_authenticate(login, password, login_url='https://archive.cefca.es/cata
 
 
 def suppress_spec_warnings(func):
+    from functools import wraps
     from astropy.io.votable.exceptions import VOTableSpecWarning
     from pyvo.utils.xml.exceptions import UnknownElementWarning
     _warns = [VOTableSpecWarning, UnknownElementWarning]
 
+    @wraps(func)
     def wrapper(*args, **kwargs):
         with warnings.catch_warnings():
             for w in _warns:
@@ -169,8 +171,9 @@ class TAPQueueManager(object):
                 If the table is already in the queue, the default
                 behaviour is to use that job. if `force=True`, submit another job.
             
-            maxrec : int
+            maxrec : int, optional
                 Maximum number of records to return.
+                Default: 1000000
         '''
         if tablename in self.jobs and not force:
             log.debug('Table %s already submitted. Use force=True to resubmit.' % tablename)
@@ -336,6 +339,38 @@ class TAPQueueManager(object):
 
 @suppress_spec_warnings    
 def download_table(service, table_name, filename, overwrite=False, maxrec=1000000, timeout=600.0):
+    '''
+    Download a table from a TAP service, fix the columns and
+    save to disk. Uses async mode to allow more records to be retrieved.
+    
+    Parameters
+    ----------
+        service : TAPService
+        
+        table_name : string
+            Table name without the schema prefix. (Ex. no 'minijpas.')
+        
+        filename : string
+            Path to the file to be saved. Must have a proper
+            extension (.fits, etc.) to allow astropy to guess the format.
+            
+        overwrite : bool, optional
+            Overwrite the file if it already exists.
+            Default: `False`
+
+        maxrec : int, optional
+            Maximum number of records to return.
+            Default: 1000000
+
+        timeout : float, optional
+            Timeout in seconds to the wait loop while waiting for the job to complete.
+            Default: 600.0
+
+    Returns
+    -------
+        table : astropy.table.Table
+            A table containing the results.
+    '''
     if path.exists(filename) and not overwrite:
         log.debug('File %s already exists, skipping download.')
         return
@@ -347,7 +382,7 @@ def download_table(service, table_name, filename, overwrite=False, maxrec=100000
     log.info('Starting job.')
     job.run()
     log.info('Waiting the job completion (current phase: %s)...' % job.phase)
-    job.wait(timeout=10.0)
+    job.wait(timeout=timeout)
     log.info('Fetching job results...')
     result = job.fetch_result()
         
