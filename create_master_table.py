@@ -47,19 +47,20 @@ if args.debug:
 # Unknown problem with data, received as 99.0
 flag_99 = 1 << 31
 
-tables_dir = 'tables'
+tables_dir = args.tablesDir
 mag_table = path.join(tables_dir, 'magabdualobj.fits')
 mag_single_table = path.join(tables_dir, 'magabsingleobj.fits')
 tileimage_table = path.join(tables_dir, 'tileimage.fits')
+stargalclass_table = path.join(tables_dir, 'stargalclass.fits')
 xjplus_table = path.join(tables_dir, 'xmatch_jplus_dr1.fits')
 xsdss_table = path.join(tables_dir, 'xmatch_sdss_dr12.fits')
 xdeep2_table = path.join(tables_dir, 'xmatch_deep2_spec.fits')
 photoz_table = path.join(tables_dir, 'photozlephare.fits')
 xalhambra_table = path.join(tables_dir, 'xmatch_alhambra.fits')
-muffit_table = path.join(tables_dir, 'photoz_MUFFIT_AUTO.txt')
+muffit_table = path.join(tables_dir, 'JPAS_PDR201912.muffit.photoz.cat')
 
-master_table = path.join(tables_dir, 'master_v01.fits')
-master_alhambra_table = path.join(tables_dir, 'master_v01_alhambra.fits')
+master_table = args.output
+master_alhambra_table = path.join(tables_dir, 'master_alhambra.fits')
 
 key = ['tile_id', 'number']
 jplus_fix_names= ['angdist',
@@ -198,14 +199,20 @@ print('Reading Photo Z table.')
 photoz = Table.read(photoz_table)
 photoz_spec = photoz[photoz['photoz'] > 0.0]
 
+print('Reading star-gal classification table.')
+stargalclass = Table.read(stargalclass_table)
+
 print('Join JPLUS.')
 master = join(mag, xjplus_single, join_type='left', keys=key, table_names=['jpas', 'jplus'])
+master.sort(key)
 for c in jplus_fix_names:
     master.rename_column(c, '%s_jplus' % c)
 
 print('Join SDSS.')
 mag_cols = ['umag', 'gmag', 'rmag', 'imag', 'zmag']
 jsdss_photo = join(idx, xsdss_photo_single, join_type='left', keys=key, table_names=['jpas', 'sdss'])
+assert (jsdss_photo['tile_id'] == master['tile_id']).all()
+assert (jsdss_photo['number'] == master['number']).all()
 mag_sdss = np.vstack([jsdss_photo[c].filled(np.nan) for c in mag_cols])
 mag_err_sdss = np.vstack([jsdss_photo['e_' + c].filled(np.nan) for c in mag_cols])
 master['mag_sdss'] = mag_sdss.T
@@ -213,6 +220,8 @@ master['mag_err_sdss'] = mag_err_sdss.T
 master['angdist_sdss'] = jsdss_photo['angdist']
 
 jsdss_spec = join(idx, xsdss_spec_single, join_type='left', keys=key, table_names=['jpas', 'sdss'])
+assert (jsdss_spec['tile_id'] == master['tile_id']).all()
+assert (jsdss_spec['number'] == master['number']).all()
 master['z_spec_sdss'] = jsdss_spec['zsp']
 master['z_spec_err_sdss'] = jsdss_spec['e_zsp']
 has_zsp = np.isfinite(jsdss_spec['zsp']).filled(False)
@@ -228,23 +237,45 @@ master['angdist_sdss'][has_zsp] = jsdss_spec['angdist']
 
 print('Join DEEP2 spectra.')
 jdeep2 = join(idx, xdeep2_single, join_type='left', keys=key, table_names=['jpas', 'deep2'])
+assert (jdeep2['tile_id'] == master['tile_id']).all()
+assert (jdeep2['number'] == master['number']).all()
 master['angdist_deep2'] = jdeep2['angdist']
 master['z_spec_deep2'] = jdeep2['z']
 master['z_spec_err_deep2'] = jdeep2['e_z']
 
 print('Join Lephare photo-z.')
 jphotoz = join(idx, photoz_spec, join_type='left', keys=key, table_names=['jpas', 'photoz'])
-master['z_photo_lephare'] = jphotoz['photoz']
-master['z_photo_err_lephare'] = jphotoz['photoz_err']
+assert (jphotoz['tile_id'] == master['tile_id']).all()
+assert (jphotoz['number'] == master['number']).all()
+master['lephare_photoz_jpas'] = jphotoz['photoz']
+master['lephare_photoz_err_jpas'] = jphotoz['photoz_err']
+master['lephare_z_cumulative_pdf_jpas'] = jphotoz['z_cumulative_pdf']
+master['lephare_z_ml_jpas'] = jphotoz['z_ml']
+master['lephare_z_best68_high_jpas'] = jphotoz['z_best68_high']
+master['lephare_z_best68_low_jpas'] = jphotoz['z_best68_low']
+master['lephare_chi_best_jpas'] = jphotoz['chi_best']
+master['lephare_odds_jpas'] = jphotoz['odds']
+
+print('Join star-gal classification.')
+jstargalclass = join(idx, stargalclass, join_type='left', keys=key, table_names=['jpas', 'stargalclass'])
+assert (jstargalclass['tile_id'] == master['tile_id']).all()
+assert (jstargalclass['number'] == master['number']).all()
+master['total_prob_star'] = jstargalclass['total_prob_star']
 
 if path.exists(muffit_table):
     print('Reading MUFFIT Photo Z table.')
-    muffit = Table.read(muffit_table, format='ascii', names=['ID', 'ra', 'dec', 'z_photo', 'z_photo_err'])
-    
+    muffit = Table.read(muffit_table, format='ascii.basic', names=['ID', 'z16', 'z84', 'z50'])
+    muffit['tile_id'] = muffit['ID'] // 100000
+    muffit['number'] = muffit['ID'] % 100000
+    del muffit['ID']
+
     print('Join MUFFIT.')
-    jmuffit = join(idx, muffit, join_type='left', keys='ID', table_names=['jpas', 'muffit'])
-    master['z_photo_muffit'] = jmuffit['z_photo']
-    master['z_photo_err_muffit'] = jmuffit['z_photo_err']
+    jmuffit = join(idx, muffit, join_type='left', keys=key, table_names=['jpas', 'muffit'])
+    assert (jmuffit['tile_id'] == master['tile_id']).all()
+    assert (jmuffit['number'] == master['number']).all()
+    master['lephare_z16_jpas'] = jmuffit['z16']
+    master['lephare_z84_jpas'] = jmuffit['z84']
+    master['lephare_z50_jpas'] = jmuffit['z50']
 
 print('Writing master table.')
 master.sort(keys=['ID'])

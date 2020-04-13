@@ -11,7 +11,7 @@ from astropy import log
 from time import sleep
 from os import path
 
-default_service_url = 'https://archive.cefca.es/catalogues/vo/tap/minijpas-idr201910'
+default_service_url = 'https://archive.cefca.es/catalogues/vo/tap/minijpas-pdr201912'
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Download JPAS tables.')
@@ -54,6 +54,7 @@ table_list = ['filter',
               'photozlephare',
               'magabsingleobj',
               'tileimage',
+              'stargalclass',
               'xmatch_jplus_dr1',
               'xmatch_sdss_dr12',
               'xmatch_deep2_spec',
