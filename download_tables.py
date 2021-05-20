@@ -51,7 +51,7 @@ else:
 
 table_list = ['filter',
               'magabdualobj',
-              'photozlephare',
+              'photozlephare_updated',
               'magabsingleobj',
               'tileimage',
               'stargalclass',

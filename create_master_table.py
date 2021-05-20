@@ -12,6 +12,7 @@ from tqdm import tqdm
 import argparse
 from os import path
 from astropy import log
+from jpdf_expand import decompress_pdf
 
 
 def xmatch_get_closest(t, keys, debug=False):
@@ -55,7 +56,7 @@ stargalclass_table = path.join(tables_dir, 'stargalclass.fits')
 xjplus_table = path.join(tables_dir, 'xmatch_jplus_dr1.fits')
 xsdss_table = path.join(tables_dir, 'xmatch_sdss_dr12.fits')
 xdeep2_table = path.join(tables_dir, 'xmatch_deep2_spec.fits')
-photoz_table = path.join(tables_dir, 'photozlephare.fits')
+photoz_table = path.join(tables_dir, 'photozlephare_updated.fits')
 xalhambra_table = path.join(tables_dir, 'xmatch_alhambra.fits')
 muffit_table = path.join(tables_dir, 'JPAS_PDR201912.muffit.photoz.cat')
 
@@ -176,10 +177,10 @@ for c, _ in single_cols:
 
 print('Reading xmatch JPLUS table.')
 xjplus = Table.read(xjplus_table)
-xjplus.rename_column('jpas_tile_id', 'tile_id')
-xjplus.rename_column('jpas_number', 'number')
-xjplus.rename_column('jplus_tile_id', 'tile_id_jplus')
-xjplus.rename_column('jplus_number', 'number_jplus')
+xjplus.rename_column('minijpas_tile_id', 'tile_id')
+xjplus.rename_column('minijpas_number', 'number')
+xjplus.rename_column('jplusdr1_tile_id', 'tile_id_jplus')
+xjplus.rename_column('jplusdr1_number', 'number_jplus')
 xjplus_single = xmatch_get_closest(xjplus, key, args.debug)
 
 print('Reading xmatch SDSS table.')
@@ -198,6 +199,13 @@ xdeep2_single = xmatch_get_closest(xdeep2_spec, key, args.debug)
 print('Reading Photo Z table.')
 photoz = Table.read(photoz_table)
 photoz_spec = photoz[photoz['photoz'] > 0.0]
+
+params = {'mu': [0.0, 1.5], 'sig': [0.0003333333333333333, 0.125],
+          'Nbasis': 20, 'Ncoef': 32001, 'Nmu': 751, 'Nsig': 28,
+          'Nv': 3, 'toler': 1e-10}
+pdf = decompress_pdf(photoz_spec['sparse_pdf'], params)
+cdf = np.cumsum(pdf, axis=1)
+photoz_spec['z_cumulative_pdf'] = cdf
 
 print('Reading star-gal classification table.')
 stargalclass = Table.read(stargalclass_table)
@@ -249,6 +257,7 @@ assert (jphotoz['tile_id'] == master['tile_id']).all()
 assert (jphotoz['number'] == master['number']).all()
 master['lephare_photoz_jpas'] = jphotoz['photoz']
 master['lephare_photoz_err_jpas'] = jphotoz['photoz_err']
+master['lephare_sparse_pdf_jpas'] = jphotoz['sparse_pdf']
 master['lephare_z_cumulative_pdf_jpas'] = jphotoz['z_cumulative_pdf']
 master['lephare_z_ml_jpas'] = jphotoz['z_ml']
 master['lephare_z_best68_high_jpas'] = jphotoz['z_best68_high']
@@ -261,6 +270,7 @@ jstargalclass = join(idx, stargalclass, join_type='left', keys=key, table_names=
 assert (jstargalclass['tile_id'] == master['tile_id']).all()
 assert (jstargalclass['number'] == master['number']).all()
 master['total_prob_star'] = jstargalclass['total_prob_star']
+master['ert_prob_star'] = jstargalclass['ert_prob_star']
 
 if path.exists(muffit_table):
     print('Reading MUFFIT Photo Z table.')
