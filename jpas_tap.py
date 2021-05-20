@@ -403,8 +403,10 @@ def fix_names(t):
     Make the table columns names simpler, and transform length=1 columns to scalars.
     '''
     for name in t.colnames:
-        field_name = name.split('.')[1].lower()
-        t[name].name = field_name
+        parts = name.split('.')
+        if len(parts) > 1:
+            field_name = name.split('.')[1].lower()
+            t[name].name = field_name
 
 def convert_dtype(t):
     '''
