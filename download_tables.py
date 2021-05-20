@@ -77,7 +77,7 @@ for tab in table_list:
 tm.saveJobList(args.jobList)
 
 log.info('Downloading tables to %s.' % args.tablesDir)
-while len(tm.listComplete()) < len(tm.jobs):
+while (len(tm.listComplete()) < len(tm.jobs)) or (len(tm.listDownloadPending()) > 0):
     tm.runNextJob()
     tm.downloadPending(overwrite=args.overwrite)
     log.info('Running: %s' % ','.join(tm.listRunning()))
