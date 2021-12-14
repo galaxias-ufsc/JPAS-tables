@@ -54,13 +54,15 @@ else:
 
 table_list = ['filter',
               'magabdualobj',
-              'photozlephare_updated',
+              'photozlephare',
               'magabsingleobj',
               'tileimage',
               'stargalclass',
-              'xmatch_jplus_dr1',
+              'xmatch_jplus_dr2',
               'xmatch_sdss_dr12',
-              'xmatch_deep2_spec',
+              'xmatch_allwise',
+              'xmatch_galex_ais',
+              #'xmatch_deep2_spec',
               #'xmatch_alhambra', # xmatch_alhambra has invalid values which mess up the VOTable parser.
               ]
 

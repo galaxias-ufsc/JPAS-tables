@@ -41,6 +41,13 @@ def parse_args():
                         help='Be verbose.')
     return parser.parse_args()
 
+jpas_pdf_dec_params = {'mu': [0.0, 1.5], 'sig': [0.0003333333333333333, 0.125],
+                       'Nbasis': 20, 'Ncoef': 32001, 'Nmu': 751, 'Nsig': 28,
+                       'Nv': 3, 'toler': 1e-10}
+jplus_pdf_dec_params = {'mu': [0.0, 1.0], 'sig': [0.0008333333333333334, 0.083333333333333333],
+                        'Nbasis': 20, 'Ncoef': 32001, 'Nmu': 201, 'Nsig': 103,
+                        'Nv': 3, 'toler': 1e-10}
+
 args = parse_args()
 if args.debug:
     log.setLevel('DEBUG')
@@ -53,10 +60,12 @@ mag_table = path.join(tables_dir, 'magabdualobj.fits')
 mag_single_table = path.join(tables_dir, 'magabsingleobj.fits')
 tileimage_table = path.join(tables_dir, 'tileimage.fits')
 stargalclass_table = path.join(tables_dir, 'stargalclass.fits')
-xjplus_table = path.join(tables_dir, 'xmatch_jplus_dr1.fits')
+xjplus_table = path.join(tables_dir, 'xmatch_jplus_dr2.fits')
 xsdss_table = path.join(tables_dir, 'xmatch_sdss_dr12.fits')
+xwise_table = path.join(tables_dir, 'xmatch_allwise.fits')
+xgalex_table = path.join(tables_dir, 'xmatch_galex_ais.fits')
 xdeep2_table = path.join(tables_dir, 'xmatch_deep2_spec.fits')
-photoz_table = path.join(tables_dir, 'photozlephare_updated.fits')
+photoz_table = path.join(tables_dir, 'photozlephare.fits')
 xalhambra_table = path.join(tables_dir, 'xmatch_alhambra.fits')
 muffit_table = path.join(tables_dir, 'JPAS_PDR201912.muffit.photoz.cat')
 
@@ -69,21 +78,15 @@ jplus_fix_names= ['angdist',
                   'morph_lhood_star',
                   'morph_prob_star',
                   'gaia_prior_star',
-                  'total_prob_star',
+                  'sglc_prob_star',
                   'lephare_photoz',
                   'lephare_photoz_err',
-                  'lephare_z_cumulative_pdf',
-                  'z_ml',
-                  'z_best68_high',
-                  'z_best68_low',
-                  'chi_best',
+                  'lephare_sparse_pdf',
+                  'lephare_z_ml',
+                  'lephare_z_best68_high',
+                  'lephare_z_best68_low',
+                  'lephare_chi_best',
                   'lephare_odds',
-                  'tpz_photoz',
-                  'tpz_photoz_err',
-                  'tpz_z_cumulative_pdf',
-                  'photoz_mode',
-                  'photoz_mode_err',
-                  'tpz_odds',
                   ]
 
 print('Reading JPAS dual detection table.')
@@ -177,11 +180,15 @@ for c, _ in single_cols:
 
 print('Reading xmatch JPLUS table.')
 xjplus = Table.read(xjplus_table)
-xjplus.rename_column('minijpas_tile_id', 'tile_id')
-xjplus.rename_column('minijpas_number', 'number')
-xjplus.rename_column('jplusdr1_tile_id', 'tile_id_jplus')
-xjplus.rename_column('jplusdr1_number', 'number_jplus')
+xjplus.rename_column('jnep_tile_id', 'tile_id')
+xjplus.rename_column('jnep_number', 'number')
+xjplus.rename_column('jplusdr2_tile_id', 'tile_id_jplus')
+xjplus.rename_column('jplusdr2_number', 'number_jplus')
 xjplus_single = xmatch_get_closest(xjplus, key, args.debug)
+pdf = decompress_pdf(xjplus_single['lephare_sparse_pdf'], jplus_pdf_dec_params)
+cdf = np.cumsum(pdf, axis=1)
+xjplus_single['lephare_z_cumulative_pdf'] = cdf
+del xjplus_single['lephare_sparse_pdf']
 
 print('Reading xmatch SDSS table.')
 xsdss = Table.read(xsdss_table)
@@ -191,19 +198,19 @@ xsdss_photo = xsdss[~has_zspec]
 xsdss_spec_single = xmatch_get_closest(xsdss_spec, key, args.debug)
 xsdss_photo_single = xmatch_get_closest(xsdss_photo, key, args.debug)
 
-print('Reading xmatch DEEP2 table.')
-xdeep2 = Table.read(xdeep2_table)
-xdeep2_spec = xdeep2[xdeep2['z'] > 0.0]
-xdeep2_single = xmatch_get_closest(xdeep2_spec, key, args.debug)
+print('Reading xmatch AllWISE table.')
+xwise = Table.read(xwise_table)
+xwise_single = xmatch_get_closest(xwise, key, args.debug)
+
+print('Reading xmatch GALEX AIS table.')
+xgalex = Table.read(xgalex_table)
+xgalex_single = xmatch_get_closest(xgalex, key, args.debug)
 
 print('Reading Photo Z table.')
 photoz = Table.read(photoz_table)
 photoz_spec = photoz[photoz['photoz'] > 0.0]
 
-params = {'mu': [0.0, 1.5], 'sig': [0.0003333333333333333, 0.125],
-          'Nbasis': 20, 'Ncoef': 32001, 'Nmu': 751, 'Nsig': 28,
-          'Nv': 3, 'toler': 1e-10}
-pdf = decompress_pdf(photoz_spec['sparse_pdf'], params)
+pdf = decompress_pdf(photoz_spec['sparse_pdf'], jpas_pdf_dec_params)
 cdf = np.cumsum(pdf, axis=1)
 photoz_spec['z_cumulative_pdf'] = cdf
 
@@ -214,15 +221,19 @@ print('Join JPLUS.')
 master = join(mag, xjplus_single, join_type='left', keys=key, table_names=['jpas', 'jplus'])
 master.sort(key)
 for c in jplus_fix_names:
-    master.rename_column(c, '%s_jplus' % c)
+    if c in master.colnames:
+        master.rename_column(c, '%s_jplus' % c)
+    else:
+        print(f'Wont fix column name {c}, not found.')
+
 
 print('Join SDSS.')
-mag_cols = ['umag', 'gmag', 'rmag', 'imag', 'zmag']
+sdss_mag_cols = ['umag', 'gmag', 'rmag', 'imag', 'zmag']
 jsdss_photo = join(idx, xsdss_photo_single, join_type='left', keys=key, table_names=['jpas', 'sdss'])
 assert (jsdss_photo['tile_id'] == master['tile_id']).all()
 assert (jsdss_photo['number'] == master['number']).all()
-mag_sdss = np.vstack([jsdss_photo[c].filled(np.nan) for c in mag_cols])
-mag_err_sdss = np.vstack([jsdss_photo['e_' + c].filled(np.nan) for c in mag_cols])
+mag_sdss = np.vstack([jsdss_photo[c].filled(np.nan) for c in sdss_mag_cols])
+mag_err_sdss = np.vstack([jsdss_photo['e_' + c].filled(np.nan) for c in sdss_mag_cols])
 master['mag_sdss'] = mag_sdss.T
 master['mag_err_sdss'] = mag_err_sdss.T
 master['angdist_sdss'] = jsdss_photo['angdist']
@@ -236,20 +247,56 @@ has_zsp = np.isfinite(jsdss_spec['zsp']).filled(False)
 jsdss_spec = jsdss_spec[has_zsp]
 
 #master['spobjid_sdss'] = jsdss['spobjid']
-mag_sdss = np.vstack([jsdss_spec[c].filled(np.nan) for c in mag_cols])
-mag_err_sdss = np.vstack([jsdss_spec['e_' + c].filled(np.nan) for c in mag_cols])
+mag_sdss = np.vstack([jsdss_spec[c].filled(np.nan) for c in sdss_mag_cols])
+mag_err_sdss = np.vstack([jsdss_spec['e_' + c].filled(np.nan) for c in sdss_mag_cols])
 master['mag_sdss'][has_zsp] = mag_sdss.T
 master['mag_err_sdss'][has_zsp] = mag_err_sdss.T
 master['angdist_sdss'][has_zsp] = jsdss_spec['angdist']
 
+print('Join AllWISE.')
+wise_mag_cols = ['jmag', 'hmag', 'kmag', 'w1mag', 'w2mag', 'w3mag', 'w4mag']
+jwise = join(idx, xwise_single, join_type='left', keys=key, table_names=['jpas', 'wise'])
+assert (jwise['tile_id'] == master['tile_id']).all()
+assert (jwise['number'] == master['number']).all()
+mag_wise = np.vstack([jwise[c].filled(np.nan) for c in wise_mag_cols])
+mag_err_wise = np.vstack([jwise['e_' + c].filled(np.nan) for c in wise_mag_cols])
+bad_mags = (mag_wise == 1e20) | (mag_err_wise == 1e20)
+mag_wise[bad_mags] = np.nan
+mag_err_wise[bad_mags] = np.nan
+master['mag_wise'] = mag_wise.T
+master['mag_err_wise'] = mag_err_wise.T
+master['angdist_wise'] = jwise['angdist']
+master['id_wise'] = jwise['allwise']
 
-print('Join DEEP2 spectra.')
-jdeep2 = join(idx, xdeep2_single, join_type='left', keys=key, table_names=['jpas', 'deep2'])
-assert (jdeep2['tile_id'] == master['tile_id']).all()
-assert (jdeep2['number'] == master['number']).all()
-master['angdist_deep2'] = jdeep2['angdist']
-master['z_spec_deep2'] = jdeep2['z']
-master['z_spec_err_deep2'] = jdeep2['e_z']
+print('Join GALEX AIS.')
+galex_mag_cols = ['fuv_mag', 'nuv_mag']
+jgalex = join(idx, xgalex_single, join_type='left', keys=key, table_names=['jpas', 'galex'])
+assert (jgalex['tile_id'] == master['tile_id']).all()
+assert (jgalex['number'] == master['number']).all()
+mag_galex = np.vstack([jgalex[c].filled(np.nan) for c in galex_mag_cols])
+mag_err_galex = np.vstack([jgalex[c + 'err'].filled(np.nan) for c in galex_mag_cols])
+bad_mags = (mag_galex == 1e20) | (mag_err_galex == 1e20)
+mag_galex[bad_mags] = np.nan
+mag_err_galex[bad_mags] = np.nan
+master['mag_galex'] = mag_galex.T
+master['mag_err_galex'] = mag_err_galex.T
+master['angdist_galex'] = jgalex['angdist']
+master['e_bv_galex'] = jgalex['e_bv']
+master['objid_galex'] = jgalex['objid']
+
+if path.exists(xdeep2_table):
+    print('Reading xmatch DEEP2 table.')
+    xdeep2 = Table.read(xdeep2_table)
+    xdeep2_spec = xdeep2[xdeep2['z'] > 0.0]
+    xdeep2_single = xmatch_get_closest(xdeep2_spec, key, args.debug)
+    
+    print('Join DEEP2 spectra.')
+    jdeep2 = join(idx, xdeep2_single, join_type='left', keys=key, table_names=['jpas', 'deep2'])
+    assert (jdeep2['tile_id'] == master['tile_id']).all()
+    assert (jdeep2['number'] == master['number']).all()
+    master['angdist_deep2'] = jdeep2['angdist']
+    master['z_spec_deep2'] = jdeep2['z']
+    master['z_spec_err_deep2'] = jdeep2['e_z']
 
 print('Join Lephare photo-z.')
 jphotoz = join(idx, photoz_spec, join_type='left', keys=key, table_names=['jpas', 'photoz'])
@@ -269,8 +316,7 @@ print('Join star-gal classification.')
 jstargalclass = join(idx, stargalclass, join_type='left', keys=key, table_names=['jpas', 'stargalclass'])
 assert (jstargalclass['tile_id'] == master['tile_id']).all()
 assert (jstargalclass['number'] == master['number']).all()
-master['total_prob_star'] = jstargalclass['total_prob_star']
-master['ert_prob_star'] = jstargalclass['ert_prob_star']
+master['total_prob_star_jpas'] = jstargalclass['sglc_prob_star']
 
 if path.exists(muffit_table):
     print('Reading MUFFIT Photo Z table.')
