@@ -12,6 +12,7 @@ from time import sleep
 from os import path
 
 default_service_url = 'https://archive.cefca.es/catalogues/vo/tap/minijpas-pdr201912'
+default_schema = 'minijpas'
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Download JPAS tables.')
@@ -21,6 +22,8 @@ def parse_args():
     parser.add_argument('--password', dest='password', help='Authentication password. Will prompt if not set.')
     parser.add_argument('--service', dest='serviceUrl', default=default_service_url,
                         help='TAP service to connect. Default: %s.' % default_service_url)
+    parser.add_argument('--schema', dest='schema', default=default_schema,
+                        help='Database schema. Default: %s.' % default_schema)
     parser.add_argument('--maxrec', dest='maxrec', default=1000000, type=int,
                         help='Maximum number of records to fecth. Default: 1000000.')
     parser.add_argument('--overwrite', dest='overwrite', action='store_true',
@@ -62,7 +65,7 @@ table_list = ['filter',
               ]
 
 log.info('Connecting to %s.' % args.serviceUrl)
-tm = TAPQueueManager(args.serviceUrl, args.tablesDir)
+tm = TAPQueueManager(args.serviceUrl, args.schema, args.tablesDir)
 tm.connect(login, password)
 
 if path.exists(args.jobList):

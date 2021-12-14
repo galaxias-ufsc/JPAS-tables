@@ -83,8 +83,9 @@ class TAPQueueManager(object):
             Default: current directory.
     '''
     
-    def __init__(self, service_url, tables_dir='.'):
+    def __init__(self, service_url, schema, tables_dir='.'):
         self.serviceUrl = service_url
+        self.schema = schema
         self.tablesDir = tables_dir
         self.auth = None
         self.service = None
@@ -150,7 +151,7 @@ class TAPQueueManager(object):
     
     
     def _query(self, tablename):
-        return 'select * from minijpas.%s' % tablename
+        return 'select * from %s.%s' % (self.schema, tablename)
     
     
     def _filePath(self, tablename):
