@@ -8,8 +8,9 @@ import requests
 import warnings
 from os import path
 from astropy import log
+from astropy.table import Table
 import numpy as np
-
+from time import sleep
 
 from pyvo.auth import authsession, securitymethods
 from pyvo.dal import TAPService, AsyncTAPJob
@@ -83,10 +84,9 @@ class TAPQueueManager(object):
             Default: current directory.
     '''
     
-    def __init__(self, service_url, schema, tables_dir='.'):
+    def __init__(self, service_url, schema):
         self.serviceUrl = service_url
         self.schema = schema
-        self.tablesDir = tables_dir
         self.auth = None
         self.service = None
         self.jobs = {}
@@ -108,95 +108,93 @@ class TAPQueueManager(object):
         self.auth = CEFCA_authenticate(login, password)
         self.service = TAPService(self.serviceUrl, self.auth)
     
-    
-    def loadJobList(self, filename):
-        '''
-        Recover job information from a list kept in an ascii table in `filename`.
-        The lines must contain:
 
-            table_name job_id PHASE
-            
-        where job_id is an integer, and PHASE is a (informative only) string.
-        
-        Parameters
-        ----------
-        
-            filename : str
-                Ascii file containing the submitted jobs.
-        '''
-        with open(filename, 'r') as f:
-            for l in f.readlines():
-                w = l.split()
-                if len(w) != 3:
-                    continue
-                tablename, job_id, phase = w
-                log.debug('Recovering table %s (job id %s, phase %s)' % (tablename, job_id, phase))
-                self._recoverJob(tablename, job_id)
+    def deleteAllServerJobs(self):
+        log.warning('Deleting all server jobs.')
+        for jd in self.service.get_job_list():
+            j = self._recoverJob(jd.jobid)
+            log.warning(f'Deleting job {j.job_id}')
+            j.delete()
+    
+
+    def _query(self, table, condition=None):
+        if condition is None:
+            return 'select * from %s.%s' % (self.schema, table)
+        else:
+            return 'select * from %s.%s where %s' % (self.schema, table, condition)
     
     
     @suppress_spec_warnings
-    def saveJobList(self, filename):
-        '''
-        Save current submitted jobs information.
-        NOTE: this will overwrite the file.
-        
-        Paramters
-        ---------
-            filename : str
-                Ascii file containing the submitted jobs.
-        
-        '''
-        with open(filename, 'w') as f:
-            f.writelines('%s %s %s\n' % (t, j.job_id, j.phase) for t, j in self.jobs.items())
-    
-    
-    def _query(self, tablename):
-        return 'select * from %s.%s' % (self.schema, tablename)
-    
-    
-    def _filePath(self, tablename):
-        return path.join(self.tablesDir, '%s.fits' % tablename)
-    
-    
-    @suppress_spec_warnings
-    def requestTable(self, tablename, force=False, maxrec=1000000):
-        '''
-        
+    def syncDownloadTable(self, table, tablefile, maxrec=1000000, overwrite=False):
+        '''        
         Parameters
         ----------
         
-            tablename : str
+            table : str
                 Name of the table, must be present in the database.
             
-            force : bool, optional
-                If the table is already in the queue, the default
-                behaviour is to use that job. if `force=True`, submit another job.
+            tablename : str, optional
+                Path to the save the table.
+                
+            overwrite : bool, optional
+                Overwrite the file if it already exists.
+                Will skip the download otherwise.
+                Default: `False`
+
+        Returns
+        -------
+
+            table_contents : Table
+                Astropy Table containing the result.
+        '''
+        if path.exists(tablefile) and not overwrite:
+            log.info(f'Table {table} already downloaded to {tablefile}, skipping download.')
+            t = Table.read(tablefile)
+            return t
+
+        query = self._query(table)
+        res = self.service.run_async(query, maxrec=maxrec)
+        t = res_to_table(res)
+        log.info('Saving table to %s.' % tablefile)
+        t.write(tablefile, overwrite=overwrite)
+        return t
+
+    
+    @suppress_spec_warnings
+    def requestTable(self, table, tablefile, maxrec=1000000, filter=None):
+        '''        
+        Parameters
+        ----------
+        
+            table : str
+                Name of the table, must be present in the database.
             
+            tablefile : str, optional
+                Path to the save the table.
+                
             maxrec : int, optional
                 Maximum number of records to return.
                 Default: 1000000
+
+            filter : str, optional
+                Filter to apply to query (using WHERE clause).
+                Example: filter='tile_id = 123456'
+                Default: None
+
+        Returns
+        -------
+
+            job : AsyncTAPJob
+                Asynchronous job queued at the server.
         '''
-        if tablename in self.jobs and not force:
-            log.debug('Table %s already submitted. Use force=True to resubmit.' % tablename)
-            return
-        query = self._query(tablename)
+        query = self._query(table, filter)
+        log.debug(f'Submitting query: {query}')
         j = self.service.submit_job(query, maxrec=maxrec)
-        log.debug('Created job %s for table %s.' % (j.job_id, tablename))
-        self.jobs[tablename] = j
+        self.jobs[tablefile] = j
+        log.debug(f'Starting job {j.job_id} ({table})')
+        j.run()
+        j.raise_if_error()
         return j
-    
-    
-    @suppress_spec_warnings
-    def runNextJob(self):
-        '''
-        Run next pending job.
-        '''
-        for tab, j in self.jobs.items():
-            if j.phase == 'PENDING':
-                j.run()
-                log.info('Started job %s (%s).' % (j.job_id, tab))
-                return j
-        return None
     
     
     @suppress_spec_warnings
@@ -243,20 +241,9 @@ class TAPQueueManager(object):
         return self._listFiltered(['PENDING'])
     
     
-    def _downloaded(self, tablename):
-        filename = self._filePath(tablename)
-        return path.exists(filename)
-        
-
-    def removeDownload(self, tablename):
-        filename = self._filePath(tablename)
-        if path.exists(filename):
-            log.debug('Deleting file %s.' % tablename)
-        
-        
     def listDownloadPending(self):
         '''
-        List complete jobs, not yet downloaded to the default path.
+        List complete jobs, not yet downloaded.
         
 
         Returns
@@ -265,53 +252,43 @@ class TAPQueueManager(object):
             available_jobs : list
                 List containing the table names of the downloadable jobs.
         '''
-        return [tab for tab in self.listComplete() if not self._downloaded(tab)]
+        return [tab for tab in self.listComplete() if not path.exists(tab)]
     
     
     @suppress_spec_warnings
-    def download(self, tablename, filename=None, overwrite=False):
+    def download(self, tablefile, overwrite=False):
         '''
         Download results of job. The job must be already completed.
         The table will be saved as an `astropy.table.Table`, in FITS format.
         
         Parameters
         ---------
-            tablename : str
-                Name of the table to download.
-            
-            filename : str, optional
+            tablefile : str
                 Path to the save the table.
-                Default: `'table_dir/tablename.fits'`, where
-                `table_dir` may be set in the constructor(falls back to `'.'`).
-                
+            
             overwrite : bool, optional
                 Overwrite the file if it already exists.
                 Will skip the download otherwise.
                 Default: `False`
                 
         '''
-        if filename is None:
-            filename = self._filePath(tablename)
-        if path.exists(filename) and not overwrite:
-            log.debug('File %s already exists, skipping download.' % filename)
+        if path.exists(tablefile) and not overwrite:
+            log.debug('File %s already exists, skipping download.' % tablefile)
             return
             
-        j = self.jobs[tablename]
+        j = self.jobs[tablefile]
         if j.phase != 'COMPLETED':
-            raise Exception('Job %s (table %s) is in phase %s. Download unavailable.' % (j.job_id, tablename, j.phase))
+            raise Exception(f'Job {j.job_id} (table {tablefile}) is in phase {j.phase}. Download unavailable.')
         
         log.debug('Fetching job %s results...' % j.job_id)
         res = j.fetch_result()
         
-        j.raise_if_error()
-        t = res.to_table()
-        log.debug('Fixing table structure.')
-        fix_names(t)
-        convert_dtype(t)
-        del t.meta['description']
-        log.info('Saving table to %s.' % filename)
-        t.write(filename, overwrite=overwrite)
-    
+        t = res_to_table(res)
+        log.info('Saving table to %s.' % tablefile)
+        t.write(tablefile, overwrite=overwrite)
+        log.info(f'Deleting job {j.job_id}.')
+        j.delete()
+
     
     def downloadPending(self, overwrite=False):
         '''
@@ -332,72 +309,11 @@ class TAPQueueManager(object):
     
     
     @suppress_spec_warnings    
-    def _recoverJob(self, tablename, job_id):
+    def _recoverJob(self, job_id):
         url = '%s/async/%s' % (self.serviceUrl, job_id)
         job = AsyncTAPJob(url, self.auth)
-        self.jobs[tablename] = job
+        return job
         
-
-@suppress_spec_warnings    
-def download_table(service, table_name, filename=None, overwrite=False, maxrec=1000000, timeout=600.0):
-    '''
-    Download a table from a TAP service, fix the columns and
-    save to disk. Uses async mode to allow more records to be retrieved.
-    
-    Parameters
-    ----------
-        service : TAPService
-        
-        table_name : string
-            Table name without the schema prefix. (Ex. no 'minijpas.')
-        
-        filename : string, optional
-            If set, write the table to this path to the file to be saved.
-            Must have a proper extension (.fits, etc.) to allow astropy to guess the format.
-            
-        overwrite : bool, optional
-            Overwrite the file if it already exists.
-            Default: `False`
-
-        maxrec : int, optional
-            Maximum number of records to return.
-            Default: 1000000
-
-        timeout : float, optional
-            Timeout in seconds to the wait loop while waiting for the job to complete.
-            Default: 600.0
-
-    Returns
-    -------
-        table : astropy.table.Table
-            A table containing the results.
-    '''
-    if path.exists(filename) and not overwrite:
-        log.debug('File %s already exists, skipping download.')
-        return
-    query = 'select * from minijpas.%s' % table_name
-
-    log.info('Submitting query.')
-    log.debug('Query: %s' % query)
-    job = service.submit_job(query, maxrec=maxrec)
-    log.info('Starting job.')
-    job.run()
-    log.info('Waiting the job completion (current phase: %s)...' % job.phase)
-    job.wait(timeout=timeout)
-    log.info('Fetching job results...')
-    result = job.fetch_result()
-        
-    job.raise_if_error()
-    t = result.to_table()
-    log.debug('Fixing table structure.')
-    fix_names(t)
-    convert_dtype(t)
-    del t.meta['description']
-    if filename is not None:
-        log.info('Saving table to %s.' % filename)
-        t.write(filename, overwrite=overwrite)
-    return t
-
 
 def fix_names(t):
     '''
@@ -440,8 +356,8 @@ def obj_col_to_array(c):
         if len(x) > max_len_x:
             max_len_x = len(x)
 
-    if isinstance(x, bytes):
-        dtype = np.dtype('|S20')
+    if isinstance(x, bytes) or isinstance(x, str):
+        dtype = np.dtype(('U', max_len_x))
         shape = (len(c),)
         data = np.zeros(shape, dtype=dtype)
         for i, x in enumerate(c):
@@ -456,4 +372,16 @@ def obj_col_to_array(c):
         data = np.zeros(shape, dtype=dtype)
         for i, x in enumerate(c):
             data[i, :len(x)] = x
+    else:
+        raise Exception(f'Column type not supported: {c.name} {type(x)}.')
     return data
+
+
+def res_to_table(res):
+    log.debug('Converting results to table.')
+    t = res.to_table()
+    log.debug('Fixing table structure.')
+    fix_names(t)
+    convert_dtype(t)
+    del t.meta['description']
+    return t
