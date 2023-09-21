@@ -61,7 +61,6 @@ flag_99 = 1 << 31
 tables_dir = args.tablesDir
 tileimage_table = path.join(tables_dir, f'tileimage.fits')
 mag_table = path.join(tables_dir, 'magabdualobj', f'magabdualobj_{args.tileId}.fits')
-mag_single_table = path.join(tables_dir, 'magabsingleobj', f'magabsingleobj_{args.tileId}.fits')
 stargalclass_table = path.join(tables_dir, 'stargalclass', f'stargalclass_{args.tileId}.fits')
 photoz_table = path.join(tables_dir, 'photozlephare', f'photozlephare_{args.tileId}.fits')
 mwextinction_table = path.join(tables_dir, 'mwextinction', f'mwextinction_{args.tileId}.fits')
@@ -79,87 +78,6 @@ if args.debug:
 ID = ['%d-%d' % (tid, oid) for tid, oid in zip(master['tile_id'], master['number'])]
 master.add_column(Column(ID), name='ID', index=0)
 idx = master[key + ['ID']]
-
-
-print('Reading single detection table.')
-mag_single = Table.read(mag_single_table)
-tileimage = Table.read(tileimage_table)
-mag_single_tile = join(mag_single, tileimage, join_type='left', keys='tile_id', table_names=['ms', 'ti'])
-mag_single_tile.sort(['number', 'filter_id_ms'])
-
-# Per tile tables to speed up things.
-tiles = np.unique(master['tile_id']).tolist()
-prematch = {}
-for t in tiles:
-    sel = mag_single_tile['ref_tile_id'] == t
-    prematch[t] = mag_single_tile[sel]
-    prematch[t].add_index('filter_id_ms')
-    prematch[t].add_index('number')
-
-single_cols = [('flags', 'int32'),
-               ('mask_flags', 'int32'),
-               ('fwhm_world', 'float32'),
-               ('mag_auto', 'float32'),
-               ('mag_err_auto', 'float32'),
-               ('mag_iso', 'float32'),
-               ('mag_err_iso', 'float32'),
-               ('mag_petro', 'float32'),
-               ('mag_err_petro', 'float32'),
-               
-               ('mu_max', 'float32'),
-               ('background', 'float32'),
-               ('threshold', 'float32'),
-               ('mag_aper_0_8', 'float32'),
-               ('mag_err_aper_0_8', 'float32'),
-               ('mag_aper_1_0', 'float32'),
-               ('mag_err_aper_1_0', 'float32'),
-               ('mag_aper_1_2', 'float32'),
-               ('mag_err_aper_1_2', 'float32'),
-               ('mag_aper_1_5', 'float32'),
-               ('mag_err_aper_1_5', 'float32'),
-               ('mag_aper_2_0', 'float32'),
-               ('mag_err_aper_2_0', 'float32'),
-               ('mag_aper_3_0', 'float32'),
-               ('mag_err_aper_3_0', 'float32'),
-               ('mag_aper_4_0', 'float32'),
-               ('mag_err_aper_4_0', 'float32'),
-               ('mag_aper_6_0', 'float32'),
-               ('mag_err_aper_6_0', 'float32'),
-               ]
-magshape = (len(master), master['mag_auto'].shape[1])
-
-data = {}
-for c, dt in single_cols:
-    if dt == 'int32':
-        fill_val = flag_99
-    else:
-        fill_val = np.nan
-    data[c] = np.full(magshape, fill_val, dtype=dt)
-
-def fill_single_data(data, i, single_cols, single_number, prematch):
-    for j, n in enumerate(single_number):
-        if n == 0: continue
-        fid = j + 1
-        k = np.where((prematch['filter_id_ms'] == fid) & (prematch['number'] == n))[0]
-        if len(k) == 0:
-            continue
-        rs = prematch[k]
-        if len(k) > 1:
-            print('           ##### too big', k)
-            rs = rs[0]
-        for c, _ in single_cols:
-            data[c][i, j] = rs[c]
-
-
-for i in tqdm(range(len(master))):
-    r = master[i]
-    single_number = r['single_detect']
-    args.tileId = r['tile_id']
-    fill_single_data(data, i, single_cols, single_number, prematch[args.tileId])
-            
-for c, _ in single_cols:
-    master[c + '_single'] = data[c]            
-
 
 print('Reading xmatch SDSS table.')
 xsdss = Table.read(xsdss_table)
@@ -242,5 +160,5 @@ print(f'Writing master table: {master_table}')
 master.sort(keys=['ID'])
 master.write(master_table, overwrite=True)
 
-dt = time.time() - dt
-print(f'Total time: {dt:d} seconds')
+dt = time.time() - t0
+print(f'Total time: {dt:.0f} seconds')
