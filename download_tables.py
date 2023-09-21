@@ -68,7 +68,6 @@ tileimage = 'tileimage'
 
 big_table_list = ['magabdualobj',
                  'photozlephare',
-                 'magabsingleobj',
                  'stargalclass',
                  'mwextinction',
                  'xmatch_sdss_dr12',
@@ -115,13 +114,13 @@ for tid in ref_tiles:
         log.info(f'Requesting table {table}.')
         j = tm.requestTable(table, tablefile, filter=f'tile_id={tid}', maxrec=args.maxrec)
         log.debug(f'Created job {j.job_id} for table {tablefile}.')
-    while (len(tm.listComplete()) < len(tm.jobs)) or (len(tm.listDownloadPending()) > 0):
+    while tm.countActiveJobs() > 0:
         time.sleep(10)
         tm.downloadPending(overwrite=args.overwrite)
-        log.info('Running: %s' % ','.join(tm.listRunning()))
-        log.info('Still in queue: %s' % ','.join(tm.listPending()))
+        log.info(f'{tm.countActiveJobs()} jobs still in queue')
+        log.debug('Jobs in queue: %s' % ','.join(tm.jobs.keys()))
     tile_count += 1
     dt = time.time() - t0
-    log.info('Took {dt:d} seconds to download data for tile {tid}.')
+    log.info(f'Took {dt:.0f} seconds to download data for tile {tid}.')
 
 log.info('Done.')

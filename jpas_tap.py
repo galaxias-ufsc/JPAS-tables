@@ -62,7 +62,24 @@ def suppress_spec_warnings(func):
                 warnings.simplefilter('ignore', category=w)
             return func(*args, **kwargs)
     return wrapper
-        
+
+
+def retry_if_error(func):
+    from functools import wraps
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        N = 10
+        n = 1
+        while n <= N:
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                log.warn(f'Got exception {e}, attempt {n}/{N}.')
+                n += 1
+        log.error('Gave up')
+        raise Exception('Too many tries.')
+
+    return wrapper
 
 
 class TAPQueueManager(object):
@@ -89,7 +106,8 @@ class TAPQueueManager(object):
         self.schema = schema
         self.auth = None
         self.service = None
-        self.jobs = {}
+        self.jobs = None
+        self.clearJobs()
     
     
     def connect(self, login, password):
@@ -112,9 +130,12 @@ class TAPQueueManager(object):
     def deleteAllServerJobs(self):
         log.warning('Deleting all server jobs.')
         for jd in self.service.get_job_list():
-            j = self._recoverJob(jd.jobid)
-            log.warning(f'Deleting job {j.job_id}')
-            j.delete()
+            log.warning(f'Deleting job {jd.jobid}')
+            try:
+                j = self._recoverJob(jd.jobid)
+                j.delete()
+            except Exception as e:
+                log.info(f'Tried to recover and delete job {jd.jobid}. Got an exception: {e}')
     
 
     def _query(self, table, condition=None):
@@ -198,64 +219,6 @@ class TAPQueueManager(object):
     
     
     @suppress_spec_warnings
-    def _listFiltered(self, phases):
-        return [t for t, j in self.jobs.items() if j.phase in phases]
-    
-    
-    def listComplete(self):
-        '''
-        List complete jobs, which have results ready for download.
-        
-        Returns
-        -------
-
-            complete_jobs : list
-                List containing the table names of the complete jobs.
-        '''
-        return self._listFiltered(['COMPLETED'])
-    
-    
-    def listRunning(self):
-        '''
-        List jobs currently running.
-
-        Returns
-        -------
-
-            complete_jobs : list
-                List containing the table names of the running jobs.
-        '''
-        return self._listFiltered(['RUN', 'EXECUTING'])
-    
-    
-    def listPending(self):
-        '''
-        List jobs currently in queue.
-
-        Returns
-        -------
-
-            complete_jobs : list
-                List containing the table names of the queued jobs.
-        '''
-        return self._listFiltered(['PENDING'])
-    
-    
-    def listDownloadPending(self):
-        '''
-        List complete jobs, not yet downloaded.
-        
-
-        Returns
-        -------
-
-            available_jobs : list
-                List containing the table names of the downloadable jobs.
-        '''
-        return [tab for tab in self.listComplete() if not path.exists(tab)]
-    
-    
-    @suppress_spec_warnings
     def download(self, tablefile, overwrite=False):
         '''
         Download results of job. The job must be already completed.
@@ -275,11 +238,7 @@ class TAPQueueManager(object):
         if path.exists(tablefile) and not overwrite:
             log.debug('File %s already exists, skipping download.' % tablefile)
             return
-            
         j = self.jobs[tablefile]
-        if j.phase != 'COMPLETED':
-            raise Exception(f'Job {j.job_id} (table {tablefile}) is in phase {j.phase}. Download unavailable.')
-        
         log.debug('Fetching job %s results...' % j.job_id)
         res = j.fetch_result()
         
@@ -288,8 +247,10 @@ class TAPQueueManager(object):
         t.write(tablefile, overwrite=overwrite)
         log.info(f'Deleting job {j.job_id}.')
         j.delete()
+        self.jobs[tablefile] = None
 
     
+    @suppress_spec_warnings    
     def downloadPending(self, overwrite=False):
         '''
         Download all completed jobs to their default paths.
@@ -303,9 +264,18 @@ class TAPQueueManager(object):
                 Default: `False`
             
         '''
-        for tab in self.listDownloadPending():
-            log.info('Downloading table %s.' % tab)
-            self.download(tab, overwrite=overwrite)
+        for tab, j in self.jobs.items():
+            if j is None:
+                continue
+            try:
+                phase = j.phase
+            except Exception as e:
+                log.debug(f'Tried to check job {j.job_id} phase, but got an exception.')
+                log.debug(f'Exception: {e}')
+                continue
+            if phase == 'COMPLETED':
+                log.info('Downloading table %s.' % tab)
+                self.download(tab, overwrite=overwrite)
     
     
     @suppress_spec_warnings    
@@ -314,6 +284,15 @@ class TAPQueueManager(object):
         job = AsyncTAPJob(url, self.auth)
         return job
         
+    
+    def countActiveJobs(self):
+        active = [tab for tab, j in self.jobs.items() if j is not None]
+        return len(active)
+
+    
+    def clearJobs(self):
+        self.jobs = {}
+
 
 def fix_names(t):
     '''
